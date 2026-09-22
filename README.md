@@ -1,5 +1,10 @@
 <h1 align="center">Evolution Api</h1>
 
+> **Distribuição Weagles:** este fork é a base mantida pela Weagles para as
+> nossas integrações. As customizações, o motivo das alterações e o fluxo de
+> manutenção estão documentados em
+> [`docs/WEAGLES_CUSTOMIZATIONS.md`](./docs/WEAGLES_CUSTOMIZATIONS.md).
+
 <div align="center">
 
 [![Docker Image](https://img.shields.io/badge/Docker-image-blue)](https://hub.docker.com/r/evoapicloud/evolution-api)
