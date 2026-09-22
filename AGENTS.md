@@ -6,6 +6,38 @@ This document provides comprehensive guidelines for AI agents (Claude, GPT, Curs
 
 **Evolution API** is a production-ready, multi-tenant WhatsApp API platform built with Node.js, TypeScript, and Express.js. It supports multiple WhatsApp providers and extensive integrations with chatbots, CRM systems, and messaging platforms.
 
+## Weagles Fork — Read This First
+
+This repository is the **Evolution da Weagles**, not a disposable local copy of
+the upstream project. The canonical repository is
+`https://github.com/Weagles-Consultoria/evolution-api`, and the production
+customization branch is `weagles/v2.3.7-lid`, based on upstream tag `2.3.7`
+(commit `cd800f29`). The `upstream` remote points to
+`https://github.com/evolution-foundation/evolution-api` for review only.
+
+Before changing code:
+
+- Read `docs/WEAGLES_CUSTOMIZATIONS.md` and check `git status`/the current
+  branch. Do not reset, rebase destructively, or replace Weagles commits with
+  upstream code without preserving and reviewing the customizations.
+- Preserve the phone-to-LID endpoint `POST /chat/fetchLid/{instance}` and the
+  Baileys mixed-batch fix. The latter is applied by
+  `Docker/scripts/patch_baileys_lid_mapping.sh`; do not edit `node_modules`
+  directly as the permanent fix.
+- For any change touching Baileys, WhatsApp routing, webhooks, authentication,
+  or instance state, add a reproduction/test when practical and run at least
+  `npm run lint:check`, `npm run db:generate`, and `npm run build`.
+- Document the reason for bug fixes, especially if they protect CRM contact,
+  LID, history-sync, or card associations. Keep commits small and use
+  conventional commit messages.
+- The production image migration is still pending: production currently uses
+  `evolution-api:2.3.7-lid2`; the validated Weagles image is
+  `evolution-api:2.3.7-weagles.1`. Do not change production casually: use a
+  versioned image, backup/rollback, `stop-first`, and a smoke test.
+
+In this workspace, read `/home/weagles/.codex/RTK.md` when available and prefix
+shell commands with `rtk`.
+
 ## Project Structure & Module Organization
 
 ### Core Directories
@@ -352,4 +384,3 @@ export DATABASE_PROVIDER=postgresql  # or mysql
 - **Error tracking**: Comprehensive error scenarios
 - **Health checks**: Instance status and connection monitoring
 - **Telemetry**: Usage analytics (non-sensitive data only)
-
