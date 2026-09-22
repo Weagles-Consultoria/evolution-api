@@ -35,9 +35,6 @@ Before changing code:
   `evolution-api:2.3.7-weagles.1`. Do not change production casually: use a
   versioned image, backup/rollback, `stop-first`, and a smoke test.
 
-In this workspace, read `/home/weagles/.codex/RTK.md` when available and prefix
-shell commands with `rtk`.
-
 ## Project Structure & Module Organization
 
 ### Core Directories
