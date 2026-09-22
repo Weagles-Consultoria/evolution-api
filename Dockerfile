@@ -26,6 +26,9 @@ COPY ./Docker ./Docker
 
 RUN chmod +x ./Docker/scripts/* && dos2unix ./Docker/scripts/*
 
+# Preserve already-resolved phone↔LID mappings when Baileys returns a mixed batch.
+RUN ./Docker/scripts/patch_baileys_lid_mapping.sh
+
 RUN ./Docker/scripts/generate_database.sh
 
 RUN npm run build
