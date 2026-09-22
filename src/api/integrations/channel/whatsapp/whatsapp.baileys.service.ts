@@ -3673,6 +3673,17 @@ export class BaileysStartupService extends ChannelStartupService {
     return onWhatsapp;
   }
 
+  /**
+   * Resolve phone-number JIDs to LIDs through the active WhatsApp socket.
+   * This is read-only from the CRM perspective; Baileys caches successful
+   * identity mappings in the existing authenticated session.
+   */
+  public async fetchLid(data: WhatsAppNumberDto) {
+    const phoneJids = data.numbers.map((number) => createJid(number));
+
+    return await this.client.signalRepository.lidMapping.getLIDsForPNs(phoneJids);
+  }
+
   public async markMessageAsRead(data: ReadMessageDto) {
     try {
       const keys: proto.IMessageKey[] = [];
