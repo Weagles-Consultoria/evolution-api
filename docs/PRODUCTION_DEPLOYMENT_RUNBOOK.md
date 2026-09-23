@@ -98,6 +98,47 @@ Depois do deploy, um novo redeploy da Stack deve continuar apontando para a
 imagem Weagles. Aplicar `docker service update` manualmente sem alterar a Stack
 cria drift e pode ser revertido por um futuro redeploy no Portainer.
 
+### Passo a passo do GHCR no Portainer
+
+Executar esta configuração uma única vez por ambiente. Nunca registrar o token
+no Git, na Stack, no Dockerfile ou neste documento.
+
+1. No GitHub, abrir `Settings → Developer settings → Personal access tokens →
+   Tokens classic`.
+2. Criar um token com somente `read:packages`. Se a organização exigir SSO,
+   autorizar o token para a organização Weagles. Copiar o token uma única vez e
+   guardá-lo no gerenciador de segredos.
+3. No Portainer, abrir `Registries → Add registry → Custom registry` e informar:
+
+   ```text
+   Name: GHCR Weagles
+   Registry URL: ghcr.io
+   Username: usuário do GitHub que criou o token
+   Password: token classic com read:packages
+   ```
+
+4. Usar `Test connection` e salvar o registry somente se o teste passar.
+5. Abrir `Stacks → evolution → Editor` e alterar o `image` para a tag da
+   release ou, preferencialmente, para o digest:
+
+   ```yaml
+   image: ghcr.io/weagles-consultoria/evolution-api@sha256:1bed2feb992b6c635101bd5a938f94b59d3ccb925400676e0bb2aa01e54692d3
+   ```
+
+6. Na implantação da Stack, selecionar o registry `GHCR Weagles` quando o
+   Portainer solicitar as credenciais do registry privado.
+7. Conferir antes do update que variáveis, volumes, networks, labels, Redis,
+   PostgreSQL, S3 e sessões não foram alterados. Remover o `command` antigo se
+   ainda existir.
+8. Atualizar a Stack pelo Portainer com uma réplica, `stop-first` e rollback
+   automático. Não fazer apenas `docker service update`.
+9. Após o update, confirmar no serviço `evolution_evolution` a imagem e o
+   digest executados antes de iniciar o smoke test.
+
+Se o Portainer não conseguir baixar a imagem, não tornar o pacote público:
+validar o usuário, o token, a permissão `read:packages`, o SSO e o registry
+selecionado na Stack.
+
 ## Backup e rollback
 
 Antes do update:
