@@ -56,9 +56,10 @@ pública e não usar `latest` em produção.
 4. Criar commit convencional e uma tag versionada, por exemplo
    `v2.3.7-weagles.2`.
 5. Criar a tag no Git e publicá-la no fork. O workflow
-   `.github/workflows/publish_weagles_ghcr.yml` constrói para `amd64` e `arm64`
-   e publica automaticamente no GHCR usando o `GITHUB_TOKEN`; não é necessário
-   cadastrar senha ou PAT no repositório.
+   `.github/workflows/publish_weagles_ghcr.yml` constrói para `linux/amd64`
+   (arquitetura da VPS de produção) e publica automaticamente no GHCR usando o
+   `GITHUB_TOKEN`; não é necessário cadastrar senha ou PAT no repositório. O
+   workflow também permite republicar uma tag existente manualmente.
 6. Confirmar no GitHub que o pacote continua privado e registrar a tag e o
    digest final da imagem.
 

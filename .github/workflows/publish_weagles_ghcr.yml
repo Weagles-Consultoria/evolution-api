@@ -4,6 +4,12 @@ on:
   push:
     tags:
       - 'v*.*.*-weagles.*'
+  workflow_dispatch:
+    inputs:
+      release_tag:
+        description: Existing Weagles tag to publish
+        required: true
+        type: string
 
 concurrency:
   group: publish-weagles-ghcr-${{ github.ref }}
@@ -12,6 +18,7 @@ concurrency:
 env:
   REGISTRY: ghcr.io
   IMAGE_NAME: weagles-consultoria/evolution-api
+  IMAGE_TAG: ${{ inputs.release_tag || github.ref_name }}
 
 jobs:
   publish:
@@ -26,6 +33,7 @@ jobs:
         uses: actions/checkout@v5
         with:
           fetch-depth: 0
+          ref: ${{ inputs.release_tag || github.ref }}
           submodules: recursive
 
       - name: Log in to GHCR
@@ -41,11 +49,7 @@ jobs:
         with:
           images: ${{ env.REGISTRY }}/${{ env.IMAGE_NAME }}
           tags: |
-            type=raw,value=${{ github.ref_name }}
-            type=sha,format=long,prefix=sha-
-
-      - name: Set up QEMU
-        uses: docker/setup-qemu-action@v3
+            type=raw,value=${{ env.IMAGE_TAG }}
 
       - name: Set up Docker Buildx
         uses: docker/setup-buildx-action@v3
@@ -56,7 +60,7 @@ jobs:
         with:
           context: .
           file: ./Dockerfile
-          platforms: linux/amd64,linux/arm64
+          platforms: linux/amd64
           push: true
           tags: ${{ steps.meta.outputs.tags }}
           labels: ${{ steps.meta.outputs.labels }}
