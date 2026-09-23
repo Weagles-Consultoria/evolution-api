@@ -12,6 +12,7 @@
     "test": "tsx watch ./test/all.test.ts",
     "lint": "eslint --fix --ext .ts src",
     "lint:check": "eslint --ext .ts src",
+    "test:media": "node --import tsx --test tests/media-webhook-inbound-fix.test.ts",
     "commit": "cz",
     "commitlint": "commitlint --edit",
     "db:generate": "node runWithProvider.js \"npx prisma generate --schema ./prisma/DATABASE_PROVIDER-schema.prisma\"",

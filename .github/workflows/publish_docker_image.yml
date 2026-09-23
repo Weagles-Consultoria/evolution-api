@@ -8,6 +8,8 @@ on:
 jobs:
   build_deploy:
     name: Build and Deploy
+    # Weagles releases are published by publish_weagles_ghcr.yml.
+    if: ${{ !contains(github.ref_name, '-weagles.') }}
     runs-on: ubuntu-latest
     permissions:
       contents: read

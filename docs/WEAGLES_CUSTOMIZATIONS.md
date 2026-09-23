@@ -79,6 +79,9 @@ o digest da imagem efetivamente executada.
 
 ## Pendências operacionais
 
+O procedimento detalhado está em
+[`docs/PRODUCTION_DEPLOYMENT_RUNBOOK.md`](./PRODUCTION_DEPLOYMENT_RUNBOOK.md).
+
 - [ ] **Trocar a imagem da Evolution no servidor de produção.**
 
   Atualmente a VPS ainda executa a imagem histórica

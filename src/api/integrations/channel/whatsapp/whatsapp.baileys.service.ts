@@ -59,7 +59,7 @@ import { PrismaRepository, Query } from '@api/repository/repository.service';
 import { chatbotController, waMonitor } from '@api/server.module';
 import { CacheService } from '@api/services/cache.service';
 import { ChannelStartupService } from '@api/services/channel.service';
-import { Events, MessageSubtype, TypeMediaMessage, wa } from '@api/types/wa.types';
+import { Events, wa } from '@api/types/wa.types';
 import { CacheEngine } from '@cache/cacheengine';
 import {
   AudioConverter,
@@ -153,6 +153,7 @@ import { PassThrough, Readable } from 'stream';
 import { v4 } from 'uuid';
 
 import { BaileysMessageProcessor } from './baileysMessage.processor';
+import { getMediaMessageContent, getUnwrappedMediaMessage, optionalMediaUpload } from './media-message.utils';
 import { useVoiceCallsBaileys } from './voiceCalls/useVoiceCallsBaileys';
 
 export interface ExtendedIMessageKey extends proto.IMessageKey {
@@ -1304,16 +1305,8 @@ export class BaileysStartupService extends ChannelStartupService {
             }
           }
 
-          const isMedia =
-            received?.message?.imageMessage ||
-            received?.message?.videoMessage ||
-            received?.message?.stickerMessage ||
-            received?.message?.documentMessage ||
-            received?.message?.documentWithCaptionMessage ||
-            received?.message?.ptvMessage ||
-            received?.message?.audioMessage;
-
-          const isVideo = received?.message?.videoMessage;
+          const mediaContent = getMediaMessageContent(received);
+          const isMedia = !!mediaContent;
 
           if (this.localSettings.readMessages && received.key.id !== 'status@broadcast') {
             await this.client.readMessages([received.key]);
@@ -1352,10 +1345,13 @@ export class BaileysStartupService extends ChannelStartupService {
             }
           }
 
+          let savedMessageId: string;
+
           if (this.configService.get<Database>('DATABASE').SAVE_DATA.NEW_MESSAGE) {
             // eslint-disable-next-line @typescript-eslint/no-unused-vars
             const { pollUpdates, ...messageData } = messageRaw;
             const msg = await this.prismaRepository.message.create({ data: messageData });
+            savedMessageId = msg.id;
 
             const { remoteJid } = received.key;
             const timestamp = msg.messageTimestamp;
@@ -1383,92 +1379,23 @@ export class BaileysStartupService extends ChannelStartupService {
             } else {
               this.logger.info(`Update readed messages duplicated ignored [avoid deadlock]: ${messageKey}`);
             }
+          }
 
-            if (isMedia) {
-              if (this.configService.get<S3>('S3').ENABLE) {
-                try {
-                  if (isVideo && !this.configService.get<S3>('S3').SAVE_VIDEO) {
-                    this.logger.warn('Video upload is disabled. Skipping video upload.');
-                    // Skip video upload by returning early from this block
-                    return;
-                  }
-
-                  const message: any = received;
-
-                  // Verificação adicional para garantir que há conteúdo de mídia real
-                  const hasRealMedia = this.hasValidMediaContent(message);
-
-                  if (!hasRealMedia) {
-                    this.logger.warn('Message detected as media but contains no valid media content');
-                  } else {
-                    const media = await this.getBase64FromMediaMessage({ message }, true);
-
-                    if (!media) {
-                      this.logger.verbose('No valid media to upload (messageContextInfo only), skipping MinIO');
-                      return;
-                    }
-
-                    const { buffer, mediaType, fileName, size } = media;
-                    const mimetype = mimeTypes.lookup(fileName).toString();
-                    const fullName = join(
-                      `${this.instance.id}`,
-                      received.key.remoteJid,
-                      mediaType,
-                      `${Date.now()}_${fileName}`,
-                    );
-                    await s3Service.uploadFile(fullName, buffer, size.fileLength?.low, { 'Content-Type': mimetype });
-
-                    await this.prismaRepository.media.create({
-                      data: {
-                        messageId: msg.id,
-                        instanceId: this.instanceId,
-                        type: mediaType,
-                        fileName: fullName,
-                        mimetype,
-                      },
-                    });
-
-                    const mediaUrl = await s3Service.getObjectUrl(fullName);
-
-                    messageRaw.message.mediaUrl = mediaUrl;
-
-                    await this.prismaRepository.message.update({ where: { id: msg.id }, data: messageRaw });
-                  }
-                } catch (error) {
-                  this.logger.error(['Error on upload file to minio', error?.message, error?.stack]);
-                }
-              }
+          if (isMedia && this.configService.get<S3>('S3').ENABLE) {
+            try {
+              await this.uploadMediaToS3(received, messageRaw, savedMessageId);
+            } catch (error) {
+              this.logger.error(
+                `Media S3 pipeline failed: instance=${this.instance.name || this.instanceId || 'unknown'} messageId=${
+                  received.key?.id || 'unknown'
+                } type=${messageRaw.messageType || 'unknown'} error=${error?.message}`,
+              );
             }
           }
 
           if (this.localWebhook.enabled) {
             if (isMedia && this.localWebhook.webhookBase64) {
-              try {
-                const buffer = await downloadMediaMessage(
-                  { key: received.key, message: received?.message },
-                  'buffer',
-                  {},
-                  { logger: P({ level: 'error' }) as any, reuploadRequest: this.client.updateMediaMessage },
-                );
-
-                if (buffer) {
-                  messageRaw.message.base64 = buffer.toString('base64');
-                } else {
-                  // retry to download media
-                  const buffer = await downloadMediaMessage(
-                    { key: received.key, message: received?.message },
-                    'buffer',
-                    {},
-                    { logger: P({ level: 'error' }) as any, reuploadRequest: this.client.updateMediaMessage },
-                  );
-
-                  if (buffer) {
-                    messageRaw.message.base64 = buffer.toString('base64');
-                  }
-                }
-              } catch (error) {
-                this.logger.error(['Error converting media to base64', error?.message]);
-              }
+              await this.addBase64ToMessage(received, messageRaw);
             }
           }
 
@@ -2424,17 +2351,7 @@ export class BaileysStartupService extends ChannelStartupService {
 
       const messageRaw = this.prepareMessage(messageSent);
 
-      const isMedia =
-        messageSent?.message?.imageMessage ||
-        messageSent?.message?.videoMessage ||
-        messageSent?.message?.stickerMessage ||
-        messageSent?.message?.ptvMessage ||
-        messageSent?.message?.documentMessage ||
-        messageSent?.message?.documentWithCaptionMessage ||
-        messageSent?.message?.ptvMessage ||
-        messageSent?.message?.audioMessage;
-
-      const isVideo = messageSent?.message?.videoMessage;
+      const isMedia = !!getMediaMessageContent(messageSent);
 
       if (this.configService.get<Chatwoot>('CHATWOOT').ENABLED && this.localChatwoot?.enabled && !isIntegration) {
         this.chatwootService.eventWhatsapp(
@@ -2455,88 +2372,28 @@ export class BaileysStartupService extends ChannelStartupService {
         }
       }
 
+      let savedMessageId: string;
+
       if (this.configService.get<Database>('DATABASE').SAVE_DATA.NEW_MESSAGE) {
         const msg = await this.prismaRepository.message.create({ data: messageRaw });
+        savedMessageId = msg.id;
+      }
 
-        if (isMedia && this.configService.get<S3>('S3').ENABLE) {
-          try {
-            if (isVideo && !this.configService.get<S3>('S3').SAVE_VIDEO) {
-              throw new Error('Video upload is disabled.');
-            }
-
-            const message: any = messageRaw;
-
-            // Verificação adicional para garantir que há conteúdo de mídia real
-            const hasRealMedia = this.hasValidMediaContent(message);
-
-            if (!hasRealMedia) {
-              this.logger.warn('Message detected as media but contains no valid media content');
-            } else {
-              const media = await this.getBase64FromMediaMessage({ message }, true);
-
-              if (!media) {
-                this.logger.verbose('No valid media to upload (messageContextInfo only), skipping MinIO');
-                return;
-              }
-
-              const { buffer, mediaType, fileName, size } = media;
-
-              const mimetype = mimeTypes.lookup(fileName).toString();
-
-              const fullName = join(
-                `${this.instance.id}`,
-                messageRaw.key.remoteJid,
-                `${messageRaw.key.id}`,
-                mediaType,
-                fileName,
-              );
-
-              await s3Service.uploadFile(fullName, buffer, size.fileLength?.low, { 'Content-Type': mimetype });
-
-              await this.prismaRepository.media.create({
-                data: { messageId: msg.id, instanceId: this.instanceId, type: mediaType, fileName: fullName, mimetype },
-              });
-
-              const mediaUrl = await s3Service.getObjectUrl(fullName);
-
-              messageRaw.message.mediaUrl = mediaUrl;
-
-              await this.prismaRepository.message.update({ where: { id: msg.id }, data: messageRaw });
-            }
-          } catch (error) {
-            this.logger.error(['Error on upload file to minio', error?.message, error?.stack]);
-          }
+      if (isMedia && this.configService.get<S3>('S3').ENABLE) {
+        try {
+          await this.uploadMediaToS3(messageSent, messageRaw, savedMessageId);
+        } catch (error) {
+          this.logger.error(
+            `Media S3 pipeline failed: instance=${this.instance.name || this.instanceId || 'unknown'} messageId=${
+              messageRaw.key?.id || 'unknown'
+            } type=${messageRaw.messageType || 'unknown'} error=${error?.message}`,
+          );
         }
       }
 
       if (this.localWebhook.enabled) {
         if (isMedia && this.localWebhook.webhookBase64) {
-          try {
-            const buffer = await downloadMediaMessage(
-              { key: messageRaw.key, message: messageRaw?.message },
-              'buffer',
-              {},
-              { logger: P({ level: 'error' }) as any, reuploadRequest: this.client.updateMediaMessage },
-            );
-
-            if (buffer) {
-              messageRaw.message.base64 = buffer.toString('base64');
-            } else {
-              // retry to download media
-              const buffer = await downloadMediaMessage(
-                { key: messageRaw.key, message: messageRaw?.message },
-                'buffer',
-                {},
-                { logger: P({ level: 'error' }) as any, reuploadRequest: this.client.updateMediaMessage },
-              );
-
-              if (buffer) {
-                messageRaw.message.base64 = buffer.toString('base64');
-              }
-            }
-          } catch (error) {
-            this.logger.error(['Error converting media to base64', error?.message]);
-          }
+          await this.addBase64ToMessage(messageSent, messageRaw);
         }
       }
 
@@ -3845,142 +3702,209 @@ export class BaileysStartupService extends ChannelStartupService {
     return map[mediaType] || null;
   }
 
+  private async getMediaBufferFromMessage(message: any, convertToMp4 = false) {
+    const msg = message?.message ? message : ((await this.getMessage(message?.key, true)) as proto.IWebMessageInfo);
+
+    if (!msg?.message) {
+      throw new Error('Message not found');
+    }
+
+    const media = getMediaMessageContent(msg);
+    if (!media) {
+      return null;
+    }
+
+    const normalizedMessage = getUnwrappedMediaMessage(msg);
+    const mediaMessage = { ...normalizedMessage.message[media.mediaType] };
+
+    if (mediaMessage.mediaKey && typeof mediaMessage.mediaKey === 'object') {
+      mediaMessage.mediaKey = Uint8Array.from(Object.values(mediaMessage.mediaKey));
+      normalizedMessage.message[media.mediaType] = mediaMessage;
+    }
+
+    let buffer: Buffer;
+
+    try {
+      buffer = await downloadMediaMessage(
+        normalizedMessage,
+        'buffer',
+        {},
+        { logger: P({ level: 'error' }) as any, reuploadRequest: this.client.updateMediaMessage },
+      );
+    } catch (error) {
+      this.logger.error(`Media download failed; retrying with direct content download: ${error?.message}`);
+      const mediaStream = await downloadContentFromMessage(
+        {
+          mediaKey: mediaMessage.mediaKey,
+          directPath: mediaMessage.directPath,
+          url: `https://mmg.whatsapp.net${mediaMessage.directPath}`,
+        },
+        await this.mapMediaType(media.mediaType),
+        {},
+      );
+      const chunks: Buffer[] = [];
+      for await (const chunk of mediaStream) {
+        chunks.push(chunk);
+      }
+      buffer = Buffer.concat(chunks);
+      this.logger.info('Media download with direct content download succeeded');
+    }
+
+    if (!buffer?.length) {
+      return null;
+    }
+
+    const typeMessage = getContentType(normalizedMessage.message);
+    const ext = mimeTypes.extension(mediaMessage.mimetype) || 'bin';
+    const fileName = mediaMessage.fileName || `${msg.key.id}.${ext}`;
+
+    if (convertToMp4 && typeMessage === 'audioMessage') {
+      const convert = await this.processAudioMp4(buffer.toString('base64'));
+      if (Buffer.isBuffer(convert)) {
+        return {
+          mediaType: media.mediaType,
+          fileName,
+          caption: mediaMessage.caption,
+          size: {
+            fileLength: mediaMessage.fileLength,
+            height: mediaMessage.height,
+            width: mediaMessage.width,
+          },
+          mimetype: 'audio/mp4',
+          buffer: convert,
+        };
+      }
+    }
+
+    return {
+      mediaType: media.mediaType,
+      fileName,
+      caption: mediaMessage.caption,
+      size: {
+        fileLength: mediaMessage.fileLength,
+        height: mediaMessage.height,
+        width: mediaMessage.width,
+      },
+      mimetype: mediaMessage.mimetype,
+      buffer,
+    };
+  }
+
+  private async uploadMediaToS3(message: any, messageRaw: any, messageId?: string) {
+    const media = getMediaMessageContent(message);
+    const mediaType = media?.mediaType || messageRaw?.messageType || 'unknown';
+    const messageIdForLog = messageRaw?.key?.id || 'unknown';
+    const instanceForLog = this.instance.name || this.instanceId || 'unknown';
+
+    if (!media) {
+      this.logger.warn(
+        `Media upload skipped at detection: instance=${instanceForLog} messageId=${messageIdForLog} type=${mediaType}`,
+      );
+      return;
+    }
+
+    if ((mediaType === 'videoMessage' || mediaType === 'ptvMessage') && !this.configService.get<S3>('S3').SAVE_VIDEO) {
+      this.logger.warn(
+        `Media upload skipped by configuration: instance=${instanceForLog} messageId=${messageIdForLog} type=${mediaType}`,
+      );
+      return;
+    }
+
+    let downloadedMedia;
+    try {
+      downloadedMedia = await this.getMediaBufferFromMessage(message);
+    } catch (error) {
+      this.logger.error(
+        `Media download failed: instance=${instanceForLog} messageId=${messageIdForLog} type=${mediaType} error=${error?.message}`,
+      );
+      return;
+    }
+
+    if (!downloadedMedia?.buffer?.length) {
+      this.logger.warn(
+        `Media upload skipped because content is empty: instance=${instanceForLog} messageId=${messageIdForLog} type=${mediaType}`,
+      );
+      return;
+    }
+
+    const lookedUpMimetype = mimeTypes.lookup(downloadedMedia.fileName);
+    const mimetype =
+      downloadedMedia.mimetype || (lookedUpMimetype ? lookedUpMimetype.toString() : 'application/octet-stream');
+    const fullName = join(
+      `${this.instance.id}`,
+      messageRaw.key.remoteJid,
+      messageRaw.key.id || messageId || messageIdForLog,
+      mediaType,
+      downloadedMedia.fileName,
+    );
+
+    const mediaUrl = await optionalMediaUpload({
+      buffer: downloadedMedia.buffer,
+      fullName,
+      mimetype,
+      uploadFile: s3Service.uploadFile,
+      getObjectUrl: s3Service.getObjectUrl,
+      onError: (stage, error) => {
+        this.logger.error(
+          `Media S3 ${stage} failed: instance=${instanceForLog} messageId=${messageIdForLog} type=${mediaType} error=${error?.message}`,
+        );
+      },
+    });
+
+    if (!mediaUrl) {
+      return;
+    }
+
+    messageRaw.message.mediaUrl = mediaUrl;
+
+    if (messageId) {
+      try {
+        await this.prismaRepository.media.create({
+          data: { messageId, instanceId: this.instanceId, type: mediaType, fileName: fullName, mimetype },
+        });
+      } catch (error) {
+        this.logger.error(
+          `Media database persistence failed: instance=${instanceForLog} messageId=${messageIdForLog} type=${mediaType} error=${error?.message}`,
+        );
+      }
+
+      try {
+        await this.prismaRepository.message.update({ where: { id: messageId }, data: messageRaw });
+      } catch (error) {
+        this.logger.error(
+          `Media URL persistence failed: instance=${instanceForLog} messageId=${messageIdForLog} type=${mediaType} error=${error?.message}`,
+        );
+      }
+    }
+  }
+
+  private async addBase64ToMessage(message: any, messageRaw: any) {
+    try {
+      const media = await this.getMediaBufferFromMessage(message);
+      if (media?.buffer?.length) {
+        messageRaw.message.base64 = media.buffer.toString('base64');
+      }
+    } catch (error) {
+      this.logger.error(
+        `Media Base64 conversion failed: instance=${this.instance.name || this.instanceId || 'unknown'} messageId=${
+          messageRaw?.key?.id || 'unknown'
+        } type=${messageRaw?.messageType || 'unknown'} error=${error?.message}`,
+      );
+    }
+  }
+
   public async getBase64FromMediaMessage(data: getBase64FromMediaMessageDto, getBuffer = false) {
     try {
-      const m = data?.message;
-      const convertToMp4 = data?.convertToMp4 ?? false;
-
-      const msg = m?.message ? m : ((await this.getMessage(m.key, true)) as proto.IWebMessageInfo);
-
-      if (!msg) {
-        throw 'Message not found';
-      }
-
-      for (const subtype of MessageSubtype) {
-        if (msg.message[subtype]) {
-          msg.message = msg.message[subtype].message;
-        }
-      }
-
-      if ('messageContextInfo' in msg.message && Object.keys(msg.message).length === 1) {
-        this.logger.verbose('Message contains only messageContextInfo, skipping media processing');
+      const media = await this.getMediaBufferFromMessage(data?.message, data?.convertToMp4 ?? false);
+      if (!media) {
+        this.logger.verbose('Message contains no supported media content, skipping media processing');
         return null;
       }
 
-      let mediaMessage: any;
-      let mediaType: string;
-
-      if (msg.message?.templateMessage) {
-        const template =
-          msg.message.templateMessage.hydratedTemplate || msg.message.templateMessage.hydratedFourRowTemplate;
-
-        for (const type of TypeMediaMessage) {
-          if (template[type]) {
-            mediaMessage = template[type];
-            mediaType = type;
-            msg.message = { [type]: { ...template[type], url: template[type].staticUrl } };
-            break;
-          }
-        }
-
-        if (!mediaMessage) {
-          throw 'Template message does not contain a supported media type';
-        }
-      } else {
-        for (const type of TypeMediaMessage) {
-          mediaMessage = msg.message[type];
-          if (mediaMessage) {
-            mediaType = type;
-            break;
-          }
-        }
-
-        if (!mediaMessage) {
-          throw 'The message is not of the media type';
-        }
-      }
-
-      if (typeof mediaMessage['mediaKey'] === 'object') {
-        msg.message[mediaType].mediaKey = Uint8Array.from(Object.values(mediaMessage['mediaKey']));
-      }
-
-      let buffer: Buffer;
-
-      try {
-        buffer = await downloadMediaMessage(
-          { key: msg?.key, message: msg?.message },
-          'buffer',
-          {},
-          { logger: P({ level: 'error' }) as any, reuploadRequest: this.client.updateMediaMessage },
-        );
-      } catch {
-        this.logger.error('Download Media failed, trying to retry in 5 seconds...');
-        await new Promise((resolve) => setTimeout(resolve, 5000));
-        const mediaType = Object.keys(msg.message).find((key) => key.endsWith('Message'));
-        if (!mediaType) throw new Error('Could not determine mediaType for fallback');
-
-        try {
-          const media = await downloadContentFromMessage(
-            {
-              mediaKey: msg.message?.[mediaType]?.mediaKey,
-              directPath: msg.message?.[mediaType]?.directPath,
-              url: `https://mmg.whatsapp.net${msg?.message?.[mediaType]?.directPath}`,
-            },
-            await this.mapMediaType(mediaType),
-            {},
-          );
-          const chunks = [];
-          for await (const chunk of media) {
-            chunks.push(chunk);
-          }
-          buffer = Buffer.concat(chunks);
-          this.logger.info('Download Media with downloadContentFromMessage was successful!');
-        } catch (fallbackErr) {
-          this.logger.error('Download Media with downloadContentFromMessage also failed!');
-          throw fallbackErr;
-        }
-      }
-      const typeMessage = getContentType(msg.message);
-
-      const ext = mimeTypes.extension(mediaMessage?.['mimetype']);
-      const fileName = mediaMessage?.['fileName'] || `${msg.key.id}.${ext}` || `${v4()}.${ext}`;
-
-      if (convertToMp4 && typeMessage === 'audioMessage') {
-        try {
-          const convert = await this.processAudioMp4(buffer.toString('base64'));
-
-          if (Buffer.isBuffer(convert)) {
-            const result = {
-              mediaType,
-              fileName,
-              caption: mediaMessage['caption'],
-              size: {
-                fileLength: mediaMessage['fileLength'],
-                height: mediaMessage['height'],
-                width: mediaMessage['width'],
-              },
-              mimetype: 'audio/mp4',
-              base64: convert.toString('base64'),
-              buffer: getBuffer ? convert : null,
-            };
-
-            return result;
-          }
-        } catch (error) {
-          this.logger.error('Error converting audio to mp4:');
-          this.logger.error(error);
-          throw new BadRequestException('Failed to convert audio to MP4');
-        }
-      }
-
       return {
-        mediaType,
-        fileName,
-        caption: mediaMessage['caption'],
-        size: { fileLength: mediaMessage['fileLength'], height: mediaMessage['height'], width: mediaMessage['width'] },
-        mimetype: mediaMessage['mimetype'],
-        base64: buffer.toString('base64'),
-        buffer: getBuffer ? buffer : null,
+        ...media,
+        base64: media.buffer.toString('base64'),
+        buffer: getBuffer ? media.buffer : null,
       };
     } catch (error) {
       this.logger.error('Error processing media message:');
