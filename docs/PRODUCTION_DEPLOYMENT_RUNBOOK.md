@@ -14,8 +14,9 @@ Este documento não contém credenciais, tokens, senhas ou endpoints privados.
 - A Stack mostrada no Portainer referencia `evoapicloud/evolution-api:v2.3.7`.
 - A imagem `2.3.7-weagles.1` contém as customizações LID, mas não deve ser
   considerada como contendo a correção de mídia feita depois dela.
-- A correção de mídia deve receber uma nova tag, por exemplo
-  `v2.3.7-weagles.2`.
+- A correção de mídia foi publicada como
+  `ghcr.io/weagles-consultoria/evolution-api:v2.3.7-weagles.2`.
+- Digest publicado: `sha256:1bed2feb992b6c635101bd5a938f94b59d3ccb925400676e0bb2aa01e54692d3`.
 - O serviço Swarm esperado é `evolution_evolution` quando a Stack se chama
   `evolution`; confirmar o nome real antes do deploy.
 
@@ -61,7 +62,7 @@ pública e não usar `latest` em produção.
    `GITHUB_TOKEN`; não é necessário cadastrar senha ou PAT no repositório. O
    workflow também permite republicar uma tag existente manualmente.
 6. Confirmar no GitHub que o pacote continua privado e registrar a tag e o
-   digest final da imagem.
+   digest final da imagem. Para esta release, ambos já estão registrados acima.
 
 Exemplo conceitual, sem credenciais:
 

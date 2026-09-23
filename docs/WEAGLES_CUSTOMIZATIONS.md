@@ -65,6 +65,13 @@ evolution-api:2.3.7-weagles.1
 Não usar `latest` em produção. Registrar no deploy a tag e, quando possível,
 o digest da imagem efetivamente executada.
 
+A release atual está publicada no registry privado da Weagles:
+
+```text
+ghcr.io/weagles-consultoria/evolution-api:v2.3.7-weagles.2
+sha256:1bed2feb992b6c635101bd5a938f94b59d3ccb925400676e0bb2aa01e54692d3
+```
+
 ## Fluxo de manutenção
 
 - `origin`: `Weagles-Consultoria/evolution-api`, fonte usada pela Weagles.
@@ -85,13 +92,11 @@ O procedimento detalhado está em
 - [ ] **Trocar a imagem da Evolution no servidor de produção.**
 
   Atualmente a VPS ainda executa a imagem histórica
-  `evolution-api:2.3.7-lid2`. A imagem validada desta distribuição é
-  `evolution-api:2.3.7-weagles.1` (digest local:
-  `sha256:0726092230086108d7bff2f825a61fb428a9ec53e0d673059e34142ea5b4bb64`).
-  Para concluir a migração, é necessário publicar ou carregar a nova imagem na
-  VPS, atualizar o serviço Swarm `evolution_evolution` com `stop-first` e
-  rollback automático, e executar um smoke test das instâncias e do endpoint
-  `POST /chat/fetchLid/{instance}`.
+  `evolution-api:2.3.7-lid2`. A nova imagem já está publicada no GHCR privado.
+  Para concluir a migração, é necessário cadastrar no Portainer uma credencial
+  somente de leitura do GHCR, atualizar o serviço Swarm `evolution_evolution`
+  com `stop-first` e rollback automático, e executar um smoke test das
+  instâncias e do endpoint `POST /chat/fetchLid/{instance}`.
 
 ## Relação com o incidente da Dra. Karine
 
